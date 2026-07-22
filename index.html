@@ -312,6 +312,25 @@
   const SHEET_ID = "1Z6zMinNwN3wG-ZvURG3S25BGWlvz-PLAtK7MpHBGZgA";
   // If you want a specific tab, set its name here, e.g. "Sheet1". Leave null to use the first sheet.
   const SHEET_NAME = null;
+
+  // Only these columns will ever be read from the sheet, in this order.
+  // Add a header here (spelled exactly as it appears in row 1 of the sheet)
+  // if you want this tool to start using a new column. Anything else in
+  // the sheet — now or added later — is ignored automatically.
+  const ALLOWED_HEADERS = [
+    "First Name",
+    "Last Name",
+    "Title",
+    "Location",
+    "Suite",
+    "Type",
+    "Sex",
+    "NPI",
+    "License",
+    "Age Range",
+    "Accepted Insurances",
+    "Photo URL"
+  ];
   // ============================
 
   let allRows = [];
@@ -319,6 +338,7 @@
   let activeType = "All";
   let activeLocation = "All";
   let activeTitle = "All";
+  let activeSex = "All";
   let sortDirection = "asc";
 
   function buildUrl(){
@@ -336,13 +356,25 @@
         setResponse: function(data){
           try{
             const cols = data.table.cols.map(c => (c.label || c.id || "").trim());
-            headers = cols.map((c,i) => c || `Column ${i+1}`);
+            const rawHeaders = cols.map((c,i) => c || `Column ${i+1}`);
+
+            // Only keep columns that are in ALLOWED_HEADERS (case-insensitive,
+            // trimmed match). This is what stops new spreadsheet columns from
+            // ever showing up here without an explicit code change above.
+            // Map each sheet column index to its canonical ALLOWED_HEADERS
+            // spelling, so row objects always use consistent, known keys.
+            const colToCanonical = rawHeaders.map(rh =>
+              ALLOWED_HEADERS.find(h => h.toLowerCase() === rh.toLowerCase()) || null
+            );
+            headers = ALLOWED_HEADERS.filter(h => colToCanonical.includes(h));
 
             allRows = data.table.rows.map(r => {
               const obj = {};
               r.c.forEach((cell, i) => {
+                const canonical = colToCanonical[i];
+                if (!canonical) return;
                 const val = cell ? (cell.f !== undefined && cell.f !== null ? cell.f : cell.v) : "";
-                obj[headers[i]] = val === null || val === undefined ? "" : String(val);
+                obj[canonical] = val === null || val === undefined ? "" : String(val);
               });
               return obj;
             }).filter(row => Object.values(row).some(v => v && v.trim() !== ""));
@@ -374,6 +406,7 @@
     const typeKey = headers.find(h => /^type$/i.test(h));
     const locationKey = headers.find(h => /^location$/i.test(h));
     const titleKey = headers.find(h => /^title$/i.test(h));
+    const sexKey = headers.find(h => /^sex$/i.test(h));
 
     let html = "";
 
@@ -408,6 +441,17 @@
       </div>`;
     }
 
+    if (sexKey){
+      const sexes = [...new Set(allRows.map(r => (r[sexKey] || "").trim()).filter(Boolean))].sort();
+      html += `<div class="filter-group">
+        <span class="filter-label">Sex</span>
+        <select class="filter-select" id="sexSelect">
+          <option value="All">All</option>
+          ${sexes.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}
+        </select>
+      </div>`;
+    }
+
     filterBar.innerHTML = html;
 
     filterBar.insertAdjacentHTML('beforeend', `<button class="reset-btn" id="resetFilters">Reset filters</button>`);
@@ -416,6 +460,7 @@
       activeType = "All";
       activeLocation = "All";
       activeTitle = "All";
+      activeSex = "All";
       document.getElementById('searchInput').value = "";
       filterBar.querySelectorAll('button[data-filter="type"]').forEach(b => {
         b.classList.toggle('active', b.dataset.value === "All");
@@ -424,6 +469,8 @@
       if (locSel) locSel.value = "All";
       const titleSel = document.getElementById('titleSelect');
       if (titleSel) titleSel.value = "All";
+      const sexSel = document.getElementById('sexSelect');
+      if (sexSel) sexSel.value = "All";
       render("");
     });
 
@@ -451,6 +498,14 @@
         render(document.getElementById('searchInput').value);
       });
     }
+
+    const sexSelect = document.getElementById('sexSelect');
+    if (sexSelect){
+      sexSelect.addEventListener('change', () => {
+        activeSex = sexSelect.value;
+        render(document.getElementById('searchInput').value);
+      });
+    }
   }
 
   function updateScopeLine(count){
@@ -466,6 +521,10 @@
 
     if (activeLocation !== "All"){
       parts.push(`in <strong>${escapeHtml(activeLocation)}</strong>`);
+    }
+
+    if (activeSex !== "All"){
+      parts.push(`who are <strong>${escapeHtml(activeSex.toLowerCase())}</strong>`);
     }
 
     const countText = `<span class="scope-count">(${count} ${count === 1 ? 'result' : 'results'})</span>`;
@@ -497,6 +556,7 @@
     const typeKey = headers.find(h => /^type$/i.test(h));
     const locationKey = headers.find(h => /^location$/i.test(h));
     const titleKey = headers.find(h => /^title$/i.test(h));
+    const sexKey = headers.find(h => /^sex$/i.test(h));
 
     let filtered = allRows;
 
@@ -508,6 +568,9 @@
     }
     if (titleKey && activeTitle !== "All"){
       filtered = filtered.filter(row => (row[titleKey] || "").trim() === activeTitle);
+    }
+    if (sexKey && activeSex !== "All"){
+      filtered = filtered.filter(row => (row[sexKey] || "").trim() === activeSex);
     }
     if (q !== ""){
       filtered = filtered.filter(row => {
